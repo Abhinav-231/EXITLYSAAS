@@ -82,8 +82,8 @@ The demo is a single FastAPI app that also serves a plain HTML/CSS/JS page (no b
 Requires Python 3.11+.
 
 ```bash
-git clone https://github.com/<your-username>/exitly.git
-cd exitly/backend
+git clone https://github.com/<your-username>/EXITLYSAAS.git
+cd EXITLYSAAS/backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
