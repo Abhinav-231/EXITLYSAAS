@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exitly: clean exits for every team</title>
+<style>
+  :root {
+    --maroon: #6f1d1b;
+    --gold: #bb9457;
+    --brown: #432818;
+    --copper: #99582a;
+    --cream: #ffe6a7;
+    --card: #fff4d6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--cream); color: var(--brown); }
+  header { background: var(--maroon); color: var(--cream); padding: 20px 24px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: .5px; }
+  header p { margin: 4px 0 0; color: var(--gold); }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--gold); border-radius: 10px; padding: 18px; }
+  h2 { margin: 0 0 12px; font-size: 18px; color: var(--maroon); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  select, button { font: inherit; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--copper); background: #fff; color: var(--brown); }
+  button { background: var(--maroon); color: var(--cream); border-color: var(--maroon); cursor: pointer; }
+  button:hover { background: var(--copper); border-color: var(--copper); }
+  button.alt { background: transparent; color: var(--maroon); }
+  button.alt:hover { background: var(--gold); color: var(--brown); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--gold); }
+  th { color: var(--copper); font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .stat { background: #fff; border: 1px solid var(--gold); border-radius: 8px; padding: 12px; }
+  .stat b { display: block; font-size: 26px; color: var(--maroon); }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; color: #fff; background: var(--copper); }
+  .tag.critical, .tag.held_for_admin_approval { background: var(--maroon); }
+  .tag.revoked_simulated, .tag.low { background: #5a7a3a; }
+  .tag.listed_for_manual_removal, .tag.medium { background: var(--gold); color: var(--brown); }
+  .muted { color: var(--copper); font-size: 13px; }
+  .hidden { display: none; }
+  footer { text-align: center; padding: 20px; color: var(--copper); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Exitly</h1>
+  <p>Clean exits for every team. Discover, revoke, prove.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Who is leaving?</h2>
+    <div class="row">
+      <select id="person"></select>
+      <button id="planBtn">Plan exit</button>
+    </div>
+    <p class="muted">Demo data only. Revocations are simulated.</p>
+    <table id="accessTable" style="margin-top:10px">
+      <thead><tr><th>Tool</th><th>Role</th><th>Last active</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card hidden" id="planCard">
+    <h2>2. Exit plan</h2>
+    <div class="stats">
+      <div class="stat"><span class="muted">Risk score</span><b id="score">-</b><span id="level" class="tag">-</span></div>
+      <div class="stat"><span class="muted">Idle seats freed / month</span><b id="savings">-</b></div>
+      <div class="stat"><span class="muted">Tools found</span><b id="toolCount">-</b></div>
+    </div>
+    <table>
+      <thead><tr><th>Tool</th><th>Action</th><th>Needs approval</th></tr></thead>
+      <tbody id="steps"></tbody>
+    </table>
+    <div class="row" style="margin-top:12px">
+      <label><input type="checkbox" id="approve"> Admin approves sensitive removals</label>
+      <button id="runBtn">Run exit (simulated)</button>
+    </div>
+    <div id="results" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <h2>3. Proof</h2>
+    <div class="row">
+      <span id="chain" class="tag">no entries yet</span>
+      <button class="alt" id="refreshBtn">Refresh log</button>
+      <a href="/audit/export.csv" download="exitly-audit.csv"><button class="alt" type="button">Download CSV</button></a>
+    </div>
+    <table style="margin-top:10px">
+      <thead><tr><th>Time</th><th>Person</th><th>Tool</th><th>Outcome</th></tr></thead>
+      <tbody id="audit"></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>Exitly hackathon demo · Build With Bharat 5.0</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let people = {}, currentExit = null;
+
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+};
+const nice = (s) => s.replaceAll("_", " ");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function loadPeople() {
+  const list = await api("/people");
+  list.forEach((p) => (people[p.id] = p));
+  $("person").innerHTML = list.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  await loadAccess();
+}
+
+async function loadAccess() {
+  const rows = await api(`/people/${$("person").value}/access`);
+  $("accessTable").querySelector("tbody").innerHTML = rows
+    .map((r) => `<tr><td>${esc(r.app)}</td><td>${esc(r.role)}</td><td>${esc(r.last_active ?? "never")}</td></tr>`).join("");
+  $("planCard").classList.add("hidden");
+  currentExit = null;
+}
+
+async function planExit() {
+  const plan = await api(`/exits/${$("person").value}`, { method: "POST" });
+  currentExit = plan.exit_id;
+  $("score").textContent = plan.risk_score;
+  $("level").textContent = plan.risk_level;
+  $("level").className = "tag " + plan.risk_level;
+  $("savings").textContent = "$" + plan.monthly_savings;
+  $("toolCount").textContent = plan.steps.length;
+  $("steps").innerHTML = plan.steps
+    .map((s) => `<tr><td>${esc(s.app_name)}</td><td>${s.action === "revoke_via_api" ? "Remove via API" : "Manual checklist"}</td><td>${s.requires_approval ? "Yes" : "No"}</td></tr>`).join("");
+  $("results").innerHTML = "";
+  $("planCard").classList.remove("hidden");
+}
+
+async function runExit() {
+  if (!currentExit) return;
+  const q = $("approve").checked ? "?approve_sensitive=true" : "";
+  const out = await api(`/exits/${currentExit}/execute${q}`, { method: "POST" });
+  $("results").innerHTML = out.results
+    .map((r) => `<div>${esc(r.app)}: <span class="tag ${esc(r.outcome)}">${esc(nice(r.outcome))}</span></div>`).join("");
+  await loadAudit();
+}
+
+async function loadAudit() {
+  const { chain_valid, entries } = await api("/audit");
+  const chain = $("chain");
+  if (!entries.length) { chain.textContent = "no entries yet"; chain.className = "tag"; }
+  else { chain.textContent = chain_valid ? "audit chain verified" : "audit chain BROKEN"; chain.className = "tag " + (chain_valid ? "low" : "critical"); }
+  $("audit").innerHTML = entries.slice().reverse().map((e) =>
+    `<tr><td>${esc(new Date(e.timestamp).toLocaleTimeString())}</td><td>${esc(people[e.person_id]?.name ?? e.person_id)}</td><td>${esc(e.app_id)}</td><td><span class="tag ${esc(e.outcome)}">${esc(nice(e.outcome))}</span></td></tr>`).join("");
+}
+
+$("person").addEventListener("change", loadAccess);
+$("planBtn").addEventListener("click", planExit);
+$("runBtn").addEventListener("click", runExit);
+$("refreshBtn").addEventListener("click", loadAudit);
+loadPeople().then(loadAudit).catch((e) => alert("Could not reach the API: " + e.message));
+</script>
+</body>
+</html>
